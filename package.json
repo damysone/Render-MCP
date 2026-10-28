@@ -1,0 +1,20 @@
+{
+  "name": "okta-mcp-server",
+  "version": "1.0.0",
+  "description": "Okta 인증 + Supabase 조회용 원격 MCP 서버 (Render 배포용)",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "express": "^4.21.2",
+    "jose": "^5.9.6",
+    "zod": "^3.23.8"
+  }
+}
