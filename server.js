@@ -109,6 +109,54 @@ const resourceMetadata = (_req, res) =>
 app.get("/.well-known/oauth-protected-resource", resourceMetadata);
 app.get("/.well-known/oauth-protected-resource/mcp", resourceMetadata);
 
+// ───────────── Okta 인증 서버 연결 보조 (fallback) ─────────────
+// Claude가 메타데이터 조회에 실패하면 MCP 서버 주소의 /authorize, /token 을 기본값으로 사용합니다.
+// (예: Render 무료 플랜 절전 후 깨어나는 동안 시간 초과)
+// 이 경우에도 Okta로 자연스럽게 넘어가도록 리다이렉트/프록시를 제공합니다.
+let oktaMetaCache = null;
+async function getOktaMetadata() {
+  if (oktaMetaCache) return oktaMetaCache;
+  const r = await fetch(`${OKTA_ISSUER}/.well-known/oauth-authorization-server`);
+  if (!r.ok) throw new Error(`Okta 메타데이터 조회 실패: HTTP ${r.status}`);
+  oktaMetaCache = await r.json();
+  return oktaMetaCache;
+}
+
+// 사용자 로그인 요청 → Okta 로그인 화면으로 그대로 전달
+app.get("/authorize", async (req, res) => {
+  if (!OKTA_ISSUER) return res.status(404).send("Okta issuer not configured");
+  try {
+    const meta = await getOktaMetadata();
+    const qs = req.originalUrl.includes("?") ? req.originalUrl.slice(req.originalUrl.indexOf("?")) : "";
+    console.log("[auth] /authorize → Okta 로 리다이렉트");
+    res.redirect(302, `${meta.authorization_endpoint}${qs}`);
+  } catch (e) {
+    console.error(e);
+    res.status(502).send("Okta 연결 실패");
+  }
+});
+
+// 토큰 요청 → Okta 토큰 엔드포인트로 그대로 전달 (프록시)
+app.post("/token", express.urlencoded({ extended: false }), async (req, res) => {
+  if (!OKTA_ISSUER) return res.status(404).json({ error: "not_configured" });
+  try {
+    const meta = await getOktaMetadata();
+    const headers = { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" };
+    if (req.headers.authorization) headers.Authorization = req.headers.authorization;
+    const r = await fetch(meta.token_endpoint, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams(req.body).toString(),
+    });
+    const text = await r.text();
+    console.log(`[auth] /token → Okta 응답 ${r.status}`);
+    res.status(r.status).type(r.headers.get("content-type") || "application/json").send(text);
+  } catch (e) {
+    console.error(e);
+    res.status(502).json({ error: "okta_unreachable" });
+  }
+});
+
 // Okta 토큰 검증 미들웨어
 const JWKS = AUTH_ENABLED ? createRemoteJWKSet(new URL(`${OKTA_ISSUER}/v1/keys`)) : null;
 
